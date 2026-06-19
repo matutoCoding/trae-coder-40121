@@ -16,7 +16,7 @@ import {
   message,
   Tabs,
 } from 'antd';
-import { PlusOutlined, CloseOutlined, BellOutlined, CheckOutlined, StopOutlined } from '@ant-design/icons';
+import { PlusOutlined, BellOutlined, CheckOutlined, StopOutlined, ClockCircleOutlined } from '@ant-design/icons';
 import { useAppStore } from '../store';
 import dayjs from 'dayjs';
 import type { WaitlistItem } from '../types';
@@ -84,7 +84,7 @@ export default function WaitlistPage() {
     if (result) {
       message.success(`已通知 ${result.patientName} 补位`);
     } else {
-      message.warning('该时段暂无候补人员');
+      message.warning('该时段暂无候补人员或已有待确认通知');
     }
   };
 
@@ -100,10 +100,10 @@ export default function WaitlistPage() {
   const handleDecline = (id: string) => {
     Modal.confirm({
       title: '确认放弃',
-      content: '确定要放弃该补位机会吗？放弃后将通知下一位候补人员。',
+      content: '确定要放弃该补位机会吗？放弃后将顺延通知下一位候补人员。',
       onOk: () => {
         declineWaitlist(id);
-        message.success('已放弃补位');
+        message.success('已放弃补位，已通知下一位');
       },
     });
   };
@@ -133,7 +133,7 @@ export default function WaitlistPage() {
     { title: '联系电话', dataIndex: 'phone', key: 'phone' },
     { title: '接种台', dataIndex: 'stationName', key: 'stationName' },
     { title: '疫苗', dataIndex: 'vaccineName', key: 'vaccineName' },
-    { title: '日期', dataIndex: 'date', key: 'date' },
+    { title: '候补日期', dataIndex: 'date', key: 'date' },
     {
       title: '登记时间',
       dataIndex: 'createdAt',
@@ -143,6 +143,7 @@ export default function WaitlistPage() {
     {
       title: '操作',
       key: 'action',
+      width: 100,
       render: (_: unknown, record: WaitlistItem) => (
         <Space>
           <Button size="small" danger onClick={() => handleCancel(record.id)}>
@@ -154,11 +155,30 @@ export default function WaitlistPage() {
   ];
 
   const notifiedColumns = [
+    {
+      title: '排位',
+      dataIndex: 'priority',
+      key: 'priority',
+      width: 60,
+      render: (priority: number) => <Tag color="blue">#{priority}</Tag>,
+    },
     { title: '患者姓名', dataIndex: 'patientName', key: 'patientName' },
     { title: '联系电话', dataIndex: 'phone', key: 'phone' },
     { title: '接种台', dataIndex: 'stationName', key: 'stationName' },
     { title: '疫苗', dataIndex: 'vaccineName', key: 'vaccineName' },
-    { title: '日期', dataIndex: 'date', key: 'date' },
+    {
+      title: '补位时段',
+      key: 'slotTime',
+      width: 130,
+      render: (_: unknown, record: WaitlistItem) => (
+        <Space direction="vertical" size={0}>
+          <Tag color="blue">{record.date}</Tag>
+          <span style={{ fontSize: 13, fontWeight: 500 }}>
+            {record.slotStartTime} - {record.slotEndTime}
+          </span>
+        </Space>
+      ),
+    },
     {
       title: '通知时间',
       dataIndex: 'notifiedAt',
@@ -166,23 +186,27 @@ export default function WaitlistPage() {
       render: (time: string) => dayjs(time).format('MM-DD HH:mm'),
     },
     {
-      title: '剩余时间',
+      title: '剩余确认时间',
       dataIndex: 'expiresAt',
       key: 'countdown',
+      width: 120,
       render: (expiresAt: string) => {
         const remaining = dayjs(expiresAt).diff(now, 'second');
         const isUrgent = remaining < 300;
         return (
-          <span
-            style={{
-              fontSize: 16,
-              fontWeight: 600,
-              color: remaining <= 0 ? '#ff4d4f' : isUrgent ? '#fa8c16' : '#1890ff',
-            }}
-            className={isUrgent && remaining > 0 ? 'timer-warning' : ''}
-          >
-            {formatCountdown(expiresAt)}
-          </span>
+          <div style={{ textAlign: 'center' }}>
+            <ClockCircleOutlined style={{ marginRight: 4, color: isUrgent ? '#fa8c16' : '#1890ff' }} />
+            <span
+              style={{
+                fontSize: 16,
+                fontWeight: 600,
+                color: remaining <= 0 ? '#ff4d4f' : isUrgent ? '#fa8c16' : '#1890ff',
+              }}
+              className={isUrgent && remaining > 0 ? 'timer-warning' : ''}
+            >
+              {formatCountdown(expiresAt)}
+            </span>
+          </div>
         );
       },
     },
@@ -221,21 +245,41 @@ export default function WaitlistPage() {
 
   const historyStatusMap: Record<string, { text: string; color: string }> = {
     confirmed: { text: '已确认', color: 'green' },
-    expired: { text: '已过期', color: 'red' },
+    expired: { text: '已超时失效', color: 'red' },
     cancelled: { text: '已放弃', color: 'default' },
   };
 
   const historyColumns = [
+    {
+      title: '排位',
+      dataIndex: 'priority',
+      key: 'priority',
+      width: 60,
+      render: (priority: number) => `#${priority}`,
+    },
     { title: '患者姓名', dataIndex: 'patientName', key: 'patientName' },
     { title: '联系电话', dataIndex: 'phone', key: 'phone' },
     { title: '接种台', dataIndex: 'stationName', key: 'stationName' },
     { title: '疫苗', dataIndex: 'vaccineName', key: 'vaccineName' },
-    { title: '日期', dataIndex: 'date', key: 'date' },
+    {
+      title: '补位时段',
+      key: 'slotTime',
+      render: (_: unknown, record: WaitlistItem) => {
+        if (record.slotStartTime && record.slotEndTime) {
+          return (
+            <span>
+              {record.date} {record.slotStartTime}-{record.slotEndTime}
+            </span>
+          );
+        }
+        return <span style={{ color: '#999' }}>未轮到</span>;
+      },
+    },
     {
       title: '通知时间',
       dataIndex: 'notifiedAt',
       key: 'notifiedAt',
-      render: (time: string) => time ? dayjs(time).format('MM-DD HH:mm') : '-',
+      render: (time: string) => (time ? dayjs(time).format('MM-DD HH:mm') : '-'),
     },
     {
       title: '最终状态',
@@ -246,12 +290,6 @@ export default function WaitlistPage() {
         if (!s) return <Tag>{status}</Tag>;
         return <Tag color={s.color}>{s.text}</Tag>;
       },
-    },
-    {
-      title: '排位',
-      dataIndex: 'priority',
-      key: 'priority',
-      render: (priority: number) => `#${priority}`,
     },
   ];
 
@@ -265,12 +303,20 @@ export default function WaitlistPage() {
         <Row gutter={16}>
           <Col span={6}>
             <Card>
-              <Statistic title="候补等待中" value={waitingList.length} valueStyle={{ color: '#faad14' }} />
+              <Statistic
+                title="候补等待中"
+                value={waitingList.length}
+                valueStyle={{ color: '#faad14' }}
+              />
             </Card>
           </Col>
           <Col span={6}>
             <Card>
-              <Statistic title="已通知待确认" value={notifiedList.length} valueStyle={{ color: '#1890ff' }} />
+              <Statistic
+                title="已通知待确认"
+                value={notifiedList.length}
+                valueStyle={{ color: '#1890ff' }}
+              />
             </Card>
           </Col>
           <Col span={6}>
@@ -316,7 +362,9 @@ export default function WaitlistPage() {
             {notifiedList.length > 0 ? (
               <Table
                 columns={notifiedColumns}
-                dataSource={notifiedList}
+                dataSource={notifiedList.sort(
+                  (a, b) => dayjs(a.notifiedAt).unix() - dayjs(b.notifiedAt).unix()
+                )}
                 rowKey="id"
                 pagination={{ pageSize: 10 }}
                 locale={{ emptyText: '暂无通知记录' }}
@@ -340,19 +388,15 @@ export default function WaitlistPage() {
               {availableSlots.length > 0 ? (
                 availableSlots.map((slot) => {
                   const hasNotifiedForSlot = waitlist.some(
-                    (w) =>
-                      w.stationId === slot.stationId &&
-                      w.vaccineId === slot.vaccineId &&
-                      w.date === slot.date &&
-                      w.status === 'notified'
+                    (w) => w.slotId === slot.id && w.status === 'notified'
                   );
-                  const hasWaiting = waitlist.some(
+                  const waitingCount = waitlist.filter(
                     (w) =>
                       w.stationId === slot.stationId &&
                       w.vaccineId === slot.vaccineId &&
                       w.date === slot.date &&
                       w.status === 'waiting'
-                  );
+                  ).length;
                   return (
                     <Card
                       key={slot.id}
@@ -365,17 +409,20 @@ export default function WaitlistPage() {
                         </Tag>
                       }
                     >
-                      <p style={{ marginBottom: 8 }}>
+                      <p style={{ marginBottom: 4 }}>
                         疫苗：{slot.vaccineName}
                       </p>
-                      <p style={{ marginBottom: 12, color: '#999', fontSize: 13 }}>
+                      <p style={{ marginBottom: 4, color: '#999', fontSize: 13 }}>
                         已预约：{slot.bookedCount}/{slot.totalCapacity}
+                      </p>
+                      <p style={{ marginBottom: 12, color: '#faad14', fontSize: 13 }}>
+                        候补等待：{waitingCount} 人
                       </p>
                       {hasNotifiedForSlot ? (
                         <Button block disabled type="default">
                           已通知候补人待确认
                         </Button>
-                      ) : hasWaiting ? (
+                      ) : waitingCount > 0 ? (
                         <Button
                           type="primary"
                           block
@@ -403,7 +450,8 @@ export default function WaitlistPage() {
           <TabPane tab={`历史记录 (${historyList.length})`} key="history">
             <Table
               columns={historyColumns}
-              dataSource={historyList.sort((a, b) => dayjs(b.createdAt).unix() - dayjs(a.createdAt).unix())}
+              dataSource={historyList
+                .sort((a, b) => dayjs(b.createdAt).unix() - dayjs(a.createdAt).unix())}
               rowKey="id"
               pagination={{ pageSize: 10 }}
               locale={{ emptyText: '暂无历史记录' }}
@@ -412,9 +460,19 @@ export default function WaitlistPage() {
         </Tabs>
       </div>
 
-      <Modal title="候补登记" open={modalOpen} onCancel={() => setModalOpen(false)} footer={null} width={500}>
+      <Modal
+        title="候补登记"
+        open={modalOpen}
+        onCancel={() => setModalOpen(false)}
+        footer={null}
+        width={500}
+      >
         <Form form={form} layout="vertical" onFinish={handleSubmit}>
-          <Form.Item name="stationId" label="接种台" rules={[{ required: true, message: '请选择接种台' }]}>
+          <Form.Item
+            name="stationId"
+            label="接种台"
+            rules={[{ required: true, message: '请选择接种台' }]}
+          >
             <Select placeholder="请选择接种台">
               {stations.map((s) => (
                 <Select.Option key={s.id} value={s.id}>
@@ -423,7 +481,11 @@ export default function WaitlistPage() {
               ))}
             </Select>
           </Form.Item>
-          <Form.Item name="vaccineId" label="疫苗类型" rules={[{ required: true, message: '请选择疫苗' }]}>
+          <Form.Item
+            name="vaccineId"
+            label="疫苗类型"
+            rules={[{ required: true, message: '请选择疫苗' }]}
+          >
             <Select placeholder="请选择疫苗">
               {vaccines.map((v) => (
                 <Select.Option key={v.id} value={v.id}>
@@ -432,10 +494,21 @@ export default function WaitlistPage() {
               ))}
             </Select>
           </Form.Item>
-          <Form.Item name="date" label="候补日期" rules={[{ required: true, message: '请选择日期' }]}>
-            <DatePicker style={{ width: '100%' }} disabledDate={(d) => d && d.isBefore(dayjs().startOf('day'))} />
+          <Form.Item
+            name="date"
+            label="候补日期"
+            rules={[{ required: true, message: '请选择日期' }]}
+          >
+            <DatePicker
+              style={{ width: '100%' }}
+              disabledDate={(d) => d && d.isBefore(dayjs().startOf('day'))}
+            />
           </Form.Item>
-          <Form.Item name="patientName" label="患者姓名" rules={[{ required: true, message: '请输入姓名' }]}>
+          <Form.Item
+            name="patientName"
+            label="患者姓名"
+            rules={[{ required: true, message: '请输入姓名' }]}
+          >
             <Input placeholder="请输入姓名" />
           </Form.Item>
           <Form.Item

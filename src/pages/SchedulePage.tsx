@@ -18,7 +18,7 @@ import {
   Col,
   Statistic,
 } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CalendarOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CalendarOutlined, BellOutlined, UserAddOutlined } from '@ant-design/icons';
 import { useAppStore } from '../store';
 import dayjs from 'dayjs';
 import type { VaccinationStation, AppointmentSlot, Appointment } from '../types';
@@ -30,12 +30,15 @@ export default function SchedulePage() {
   const [stationModalOpen, setStationModalOpen] = useState(false);
   const [slotModalOpen, setSlotModalOpen] = useState(false);
   const [appointmentModalOpen, setAppointmentModalOpen] = useState(false);
+  const [waitlistModalOpen, setWaitlistModalOpen] = useState(false);
   const [editingStation, setEditingStation] = useState<VaccinationStation | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<AppointmentSlot | null>(null);
+  const [waitlistSlot, setWaitlistSlot] = useState<AppointmentSlot | null>(null);
   const [selectedDate, setSelectedDate] = useState(dayjs().format('YYYY-MM-DD'));
   const [form] = Form.useForm();
   const [appointmentForm] = Form.useForm();
   const [slotForm] = Form.useForm();
+  const [waitlistForm] = Form.useForm();
 
   const {
     stations,
@@ -49,6 +52,10 @@ export default function SchedulePage() {
     cancelAppointment,
     checkInAppointment,
     vaccines,
+    waitlist,
+    addWaitlist,
+    processWaitlistForSlot,
+    getWaitlistCountForSlot,
   } = useAppStore();
 
   const handleAddStation = () => {
@@ -156,6 +163,39 @@ export default function SchedulePage() {
   const handleCheckIn = (id: string) => {
     checkInAppointment(id);
     message.success('签到成功');
+  };
+
+  const handleWaitlistFromSlot = (slot: AppointmentSlot) => {
+    setWaitlistSlot(slot);
+    waitlistForm.resetFields();
+    waitlistForm.setFieldsValue({
+      stationId: slot.stationId,
+      vaccineId: slot.vaccineId,
+      date: dayjs(slot.date),
+    });
+    setWaitlistModalOpen(true);
+  };
+
+  const handleWaitlistSubmit = (values: any) => {
+    addWaitlist({
+      stationId: values.stationId,
+      vaccineId: values.vaccineId,
+      date: values.date.format('YYYY-MM-DD'),
+      patientName: values.patientName,
+      idCard: values.idCard,
+      phone: values.phone,
+    });
+    message.success('候补登记成功');
+    setWaitlistModalOpen(false);
+  };
+
+  const handleNotifyNext = (slotId: string) => {
+    const result = processWaitlistForSlot(slotId);
+    if (result) {
+      message.success(`已通知 ${result.patientName} 补位`);
+    } else {
+      message.warning('该时段暂无候补人员或已有待确认通知');
+    }
   };
 
   const todayAppointments = appointments.filter((a) => a.date === selectedDate);
@@ -301,26 +341,91 @@ export default function SchedulePage() {
                 }
               >
                 {slotsByStation[station.id] ? (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {slotsByStation[station.id].map((slot) => (
-                      <Button
-                        key={slot.id}
-                        onClick={() => handleBookAppointment(slot)}
-                        disabled={slot.bookedCount >= slot.totalCapacity}
-                        style={{
-                          minWidth: 120,
-                          textAlign: 'center',
-                          borderColor: slot.bookedCount >= slot.totalCapacity ? '#ff4d4f' : '#d9d9d9',
-                        }}
-                      >
-                        <div style={{ fontSize: 14, fontWeight: 500 }}>
-                          {slot.startTime} - {slot.endTime}
-                        </div>
-                        <div style={{ fontSize: 12, color: slot.bookedCount >= slot.totalCapacity ? '#ff4d4f' : '#52c41a' }}>
-                          {slot.vaccineName} | {slot.bookedCount}/{slot.totalCapacity}
-                        </div>
-                      </Button>
-                    ))}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                    {slotsByStation[station.id].map((slot) => {
+                      const isFull = slot.bookedCount >= slot.totalCapacity;
+                      const waitlistStats = getWaitlistCountForSlot(slot.id);
+                      const hasNotified = waitlistStats.notified > 0;
+                      const hasWaiting = waitlistStats.waiting > 0;
+
+                      return (
+                        <Card
+                          key={slot.id}
+                          size="small"
+                          style={{
+                            width: 200,
+                            borderColor: isFull ? '#ff4d4f' : '#d9d9d9',
+                          }}
+                          styles={{ body: { padding: 12 } }}
+                          title={
+                            <div style={{ fontSize: 14, fontWeight: 500 }}>
+                              {slot.startTime} - {slot.endTime}
+                            </div>
+                          }
+                          extra={
+                            <Tag color={isFull ? 'red' : 'green'}>
+                              {isFull ? '已满' : '可预约'}
+                            </Tag>
+                          }
+                        >
+                          <div style={{ marginBottom: 8, fontSize: 13 }}>
+                            <span style={{ color: '#666' }}>疫苗：</span>
+                            <span>{slot.vaccineName}</span>
+                          </div>
+                          <div style={{ marginBottom: 8, fontSize: 13 }}>
+                            <span style={{ color: '#666' }}>预约：</span>
+                            <span style={{ color: isFull ? '#ff4d4f' : '#52c41a', fontWeight: 500 }}>
+                              {slot.bookedCount}/{slot.totalCapacity}
+                            </span>
+                          </div>
+                          <div style={{ marginBottom: 10, display: 'flex', gap: 8, fontSize: 12 }}>
+                            <Tag color="orange" style={{ margin: 0 }}>
+                              候补 {waitlistStats.waiting}
+                            </Tag>
+                            <Tag color="blue" style={{ margin: 0 }}>
+                              待确认 {waitlistStats.notified}
+                            </Tag>
+                          </div>
+                          <Space direction="vertical" size={6} style={{ width: '100%' }}>
+                            {!isFull && (
+                              <Button
+                                type="primary"
+                                size="small"
+                                block
+                                onClick={() => handleBookAppointment(slot)}
+                              >
+                                预约登记
+                              </Button>
+                            )}
+                            {!isFull && hasWaiting && !hasNotified && (
+                              <Button
+                                size="small"
+                                block
+                                icon={<BellOutlined />}
+                                onClick={() => handleNotifyNext(slot.id)}
+                              >
+                                通知下一位候补
+                              </Button>
+                            )}
+                            {!isFull && hasNotified && (
+                              <Button size="small" block disabled>
+                                已通知待确认
+                              </Button>
+                            )}
+                            {isFull && (
+                              <Button
+                                size="small"
+                                block
+                                icon={<UserAddOutlined />}
+                                onClick={() => handleWaitlistFromSlot(slot)}
+                              >
+                                登记候补
+                              </Button>
+                            )}
+                          </Space>
+                        </Card>
+                      );
+                    })}
                   </div>
                 ) : (
                   <div style={{ color: '#999', textAlign: 'center', padding: 20 }}>
@@ -517,6 +622,105 @@ export default function SchedulePage() {
           <Form.Item>
             <Button type="primary" htmlType="submit" block>
               确认预约
+            </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      <Modal
+        title="候补登记"
+        open={waitlistModalOpen}
+        onCancel={() => setWaitlistModalOpen(false)}
+        footer={null}
+        width={500}
+      >
+        <Form form={waitlistForm} layout="vertical" onFinish={handleWaitlistSubmit}>
+          {waitlistSlot && (
+            <div style={{ marginBottom: 16, padding: 12, background: '#fff7e6', borderRadius: 8 }}>
+              <div style={{ marginBottom: 4 }}>
+                <strong>接种台：</strong>
+                {waitlistSlot.stationName}
+              </div>
+              <div style={{ marginBottom: 4 }}>
+                <strong>疫苗：</strong>
+                {waitlistSlot.vaccineName}
+              </div>
+              <div>
+                <strong>目标时段：</strong>
+                {waitlistSlot.date} {waitlistSlot.startTime} - {waitlistSlot.endTime}
+              </div>
+              <div style={{ marginTop: 8, fontSize: 12, color: '#fa8c16' }}>
+                该时段已满，登记候补后有空位将按顺序通知补位
+              </div>
+            </div>
+          )}
+          <Form.Item
+            name="stationId"
+            label="接种台"
+            rules={[{ required: true, message: '请选择接种台' }]}
+          >
+            <Select placeholder="请选择接种台" disabled={!!waitlistSlot}>
+              {stations.map((s) => (
+                <Select.Option key={s.id} value={s.id}>
+                  {s.name}
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item
+            name="vaccineId"
+            label="疫苗类型"
+            rules={[{ required: true, message: '请选择疫苗' }]}
+          >
+            <Select placeholder="请选择疫苗" disabled={!!waitlistSlot}>
+              {vaccines.map((v) => (
+                <Select.Option key={v.id} value={v.id}>
+                  {v.name}
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item
+            name="date"
+            label="候补日期"
+            rules={[{ required: true, message: '请选择日期' }]}
+          >
+            <DatePicker
+              style={{ width: '100%' }}
+              disabledDate={(d) => d && d.isBefore(dayjs().startOf('day'))}
+              disabled={!!waitlistSlot}
+            />
+          </Form.Item>
+          <Form.Item
+            name="patientName"
+            label="患者姓名"
+            rules={[{ required: true, message: '请输入姓名' }]}
+          >
+            <Input placeholder="请输入姓名" />
+          </Form.Item>
+          <Form.Item
+            name="idCard"
+            label="身份证号"
+            rules={[
+              { required: true, message: '请输入身份证号' },
+              { len: 18, message: '身份证号为18位' },
+            ]}
+          >
+            <Input placeholder="请输入身份证号" maxLength={18} />
+          </Form.Item>
+          <Form.Item
+            name="phone"
+            label="联系电话"
+            rules={[
+              { required: true, message: '请输入手机号' },
+              { pattern: /^1[3-9]\d{9}$/, message: '请输入正确的手机号' },
+            ]}
+          >
+            <Input placeholder="请输入手机号" maxLength={11} />
+          </Form.Item>
+          <Form.Item>
+            <Button type="primary" htmlType="submit" block>
+              确认候补
             </Button>
           </Form.Item>
         </Form>

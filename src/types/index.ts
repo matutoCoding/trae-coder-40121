@@ -81,6 +81,9 @@ export interface WaitlistItem {
   phone: string;
   priority: number;
   status: 'waiting' | 'notified' | 'confirmed' | 'cancelled' | 'expired';
+  slotId?: string;
+  slotStartTime?: string;
+  slotEndTime?: string;
   notifiedAt?: string;
   expiresAt?: string;
   createdAt: string;

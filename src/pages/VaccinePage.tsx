@@ -16,8 +16,17 @@ import {
   Col,
   Statistic,
   message,
+  Progress,
 } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, WarningOutlined } from '@ant-design/icons';
+import {
+  PlusOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  WarningOutlined,
+  SafetyCertificateOutlined,
+  ClockCircleOutlined,
+  ExclamationCircleOutlined,
+} from '@ant-design/icons';
 import { useAppStore } from '../store';
 import dayjs from 'dayjs';
 import type { Vaccine, VaccineBatch } from '../types';
@@ -45,6 +54,18 @@ export default function VaccinePage() {
     deleteBatch,
     recallBatch: doRecallBatch,
   } = useAppStore();
+
+  const normalBatches = batches.filter((b) => b.status === 'normal' && !dayjs(b.expiryDate).isBefore(dayjs().startOf('day')));
+  const recalledBatches = batches.filter((b) => b.status === 'recalled');
+  const expiredBatches = batches.filter(
+    (b) => b.status === 'expired' || (b.status === 'normal' && dayjs(b.expiryDate).isBefore(dayjs().startOf('day')))
+  );
+
+  const availableStock = normalBatches.reduce((sum, b) => sum + (b.quantity - b.usedQuantity), 0);
+  const expiredStock = expiredBatches.reduce((sum, b) => sum + (b.quantity - b.usedQuantity), 0);
+  const recalledStock = recalledBatches.reduce((sum, b) => sum + (b.quantity - b.usedQuantity), 0);
+  const totalStock = batches.reduce((sum, b) => sum + b.quantity, 0);
+  const totalUsed = batches.reduce((sum, b) => sum + b.usedQuantity, 0);
 
   const handleAddVaccine = () => {
     setEditingVaccine(null);
@@ -125,13 +146,6 @@ export default function VaccinePage() {
     setRecallModalOpen(false);
   };
 
-  const normalBatches = batches.filter((b) => b.status === 'normal');
-  const recalledBatches = batches.filter((b) => b.status === 'recalled');
-  const expiredBatches = batches.filter((b) => b.status === 'expired');
-
-  const totalQuantity = batches.reduce((sum, b) => sum + b.quantity, 0);
-  const usedQuantity = batches.reduce((sum, b) => sum + b.usedQuantity, 0);
-
   const vaccineColumns = [
     { title: '疫苗名称', dataIndex: 'name', key: 'name' },
     { title: '生产厂家', dataIndex: 'manufacturer', key: 'manufacturer' },
@@ -155,7 +169,12 @@ export default function VaccinePage() {
 
   const batchColumns = [
     { title: '疫苗名称', dataIndex: 'vaccineName', key: 'vaccineName' },
-    { title: '批号', dataIndex: 'batchNo', key: 'batchNo', render: (v: string) => <Tag color="blue">{v}</Tag> },
+    {
+      title: '批号',
+      dataIndex: 'batchNo',
+      key: 'batchNo',
+      render: (v: string) => <Tag color="blue">{v}</Tag>,
+    },
     { title: '生产日期', dataIndex: 'manufactureDate', key: 'manufactureDate' },
     {
       title: '有效期至',
@@ -170,20 +189,40 @@ export default function VaccinePage() {
         return <Tag color={color as any}>{date}</Tag>;
       },
     },
-    { title: '入库数量', dataIndex: 'quantity', key: 'quantity' },
-    { title: '已使用', dataIndex: 'usedQuantity', key: 'usedQuantity' },
+    {
+      title: '库存情况',
+      key: 'stock',
+      width: 200,
+      render: (_: unknown, record: VaccineBatch) => {
+        const remaining = record.quantity - record.usedQuantity;
+        const percent = record.quantity > 0 ? (record.usedQuantity / record.quantity) * 100 : 0;
+        return (
+          <div>
+            <Progress
+              percent={Math.round(percent)}
+              size="small"
+              status={remaining <= 0 ? 'exception' : 'active'}
+            />
+            <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>
+              剩余 {remaining} / {record.quantity} 支
+            </div>
+          </div>
+        );
+      },
+    },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (status: string) => {
+      render: (status: string, record: VaccineBatch) => {
+        const isExpired = dayjs(record.expiryDate).isBefore(dayjs().startOf('day'));
         const colorMap: Record<string, string> = {
-          normal: 'green',
+          normal: isExpired ? 'red' : 'green',
           recalled: 'red',
           expired: 'default',
         };
         const textMap: Record<string, string> = {
-          normal: '正常',
+          normal: isExpired ? '已过期' : '正常',
           recalled: '已召回',
           expired: '已过期',
         };
@@ -193,9 +232,10 @@ export default function VaccinePage() {
     {
       title: '操作',
       key: 'action',
+      width: 120,
       render: (_: unknown, record: VaccineBatch) => (
         <Space>
-          {record.status === 'normal' && (
+          {record.status === 'normal' && !dayjs(record.expiryDate).isBefore(dayjs().startOf('day')) && (
             <Button size="small" danger icon={<WarningOutlined />} onClick={() => handleRecall(record)}>
               召回
             </Button>
@@ -211,22 +251,49 @@ export default function VaccinePage() {
         <Row gutter={16}>
           <Col span={6}>
             <Card>
-              <Statistic title="疫苗种类" value={vaccines.length} />
+              <Statistic
+                title="可用库存"
+                value={availableStock}
+                suffix="支"
+                valueStyle={{ color: '#52c41a' }}
+                prefix={<SafetyCertificateOutlined />}
+              />
+              <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>正常批次：{normalBatches.length} 个批次</div>
             </Card>
           </Col>
           <Col span={6}>
             <Card>
-              <Statistic title="批次总数" value={batches.length} />
+              <Statistic
+                title="已用总量"
+                value={totalUsed}
+                suffix="支"
+                valueStyle={{ color: '#1890ff' }}
+              />
+              <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>总库存：{totalStock} 支</div>
             </Card>
           </Col>
           <Col span={6}>
             <Card>
-              <Statistic title="库存总量" value={totalQuantity - usedQuantity} />
+              <Statistic
+                title="过期库存"
+                value={expiredStock}
+                suffix="支"
+                valueStyle={{ color: '#8c8c8c' }}
+                prefix={<ClockCircleOutlined />}
+              />
+              <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>过期批次：{expiredBatches.length} 个</div>
             </Card>
           </Col>
           <Col span={6}>
             <Card>
-              <Statistic title="已召回批次" value={recalledBatches.length} valueStyle={{ color: '#ff4d4f' }} />
+              <Statistic
+                title="召回库存"
+                value={recalledStock}
+                suffix="支"
+                valueStyle={{ color: '#ff4d4f' }}
+                prefix={<ExclamationCircleOutlined />}
+              />
+              <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>召回批次：{recalledBatches.length} 个</div>
             </Card>
           </Col>
         </Row>
@@ -242,18 +309,10 @@ export default function VaccinePage() {
             </div>
 
             <Tabs type="card" size="small" style={{ marginBottom: 16 }} defaultActiveKey="normal">
-              <TabPane tab={`正常 (${normalBatches.length})`} key="normal">
+              <TabPane tab={`可用 (${normalBatches.length})`} key="normal">
                 <Table
                   columns={batchColumns}
                   dataSource={normalBatches}
-                  rowKey="id"
-                  pagination={{ pageSize: 10 }}
-                />
-              </TabPane>
-              <TabPane tab={`已召回 (${recalledBatches.length})`} key="recalled">
-                <Table
-                  columns={batchColumns}
-                  dataSource={recalledBatches}
                   rowKey="id"
                   pagination={{ pageSize: 10 }}
                 />
@@ -262,6 +321,14 @@ export default function VaccinePage() {
                 <Table
                   columns={batchColumns}
                   dataSource={expiredBatches}
+                  rowKey="id"
+                  pagination={{ pageSize: 10 }}
+                />
+              </TabPane>
+              <TabPane tab={`已召回 (${recalledBatches.length})`} key="recalled">
+                <Table
+                  columns={batchColumns}
+                  dataSource={recalledBatches}
                   rowKey="id"
                   pagination={{ pageSize: 10 }}
                 />
@@ -275,12 +342,7 @@ export default function VaccinePage() {
                 添加疫苗
               </Button>
             </div>
-            <Table
-              columns={vaccineColumns}
-              dataSource={vaccines}
-              rowKey="id"
-              pagination={false}
-            />
+            <Table columns={vaccineColumns} dataSource={vaccines} rowKey="id" pagination={false} />
           </TabPane>
         </Tabs>
       </div>
@@ -313,8 +375,24 @@ export default function VaccinePage() {
         </Form>
       </Modal>
 
-      <Modal title="批次入库" open={batchModalOpen} onCancel={() => setBatchModalOpen(false)} footer={null} width={500}>
-        <div style={{ marginBottom: 12, padding: 8, background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 6, fontSize: 13, color: '#ad6800' }}>
+      <Modal
+        title="批次入库"
+        open={batchModalOpen}
+        onCancel={() => setBatchModalOpen(false)}
+        footer={null}
+        width={500}
+      >
+        <div
+          style={{
+            marginBottom: 12,
+            padding: '8px 12px',
+            background: '#fffbe6',
+            border: '1px solid #ffe58f',
+            borderRadius: 6,
+            fontSize: 13,
+            color: '#ad6800',
+          }}
+        >
           ⚠ 注意：录入已过期的批次将自动归入"已过期"分类，不可用于接种流程。
         </div>
         <Form form={batchForm} layout="vertical" onFinish={handleSaveBatch}>
@@ -368,17 +446,28 @@ export default function VaccinePage() {
         onOk={confirmRecall}
         okText="确认召回"
         okButtonProps={{ danger: true }}
-        width={500}
+        width={520}
       >
         {recallBatch && (
           <div>
-            <div style={{ marginBottom: 16, padding: 16, background: '#fff2f0', borderRadius: 8, border: '1px solid #ffccc7' }}>
+            <div
+              style={{
+                marginBottom: 16,
+                padding: 16,
+                background: '#fff2f0',
+                borderRadius: 8,
+                border: '1px solid #ffccc7',
+              }}
+            >
               <div style={{ fontWeight: 600, marginBottom: 8, color: '#ff4d4f' }}>
                 ⚠ 召回批次信息
               </div>
               <div>疫苗：{recallBatch.vaccineName}</div>
               <div>批号：{recallBatch.batchNo}</div>
               <div>有效期至：{recallBatch.expiryDate}</div>
+              <div>
+                剩余库存：{recallBatch.quantity - recallBatch.usedQuantity} / {recallBatch.quantity} 支
+              </div>
               <div>已使用：{recallBatch.usedQuantity} 支</div>
             </div>
             <Form.Item label="召回原因" required>
