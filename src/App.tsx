@@ -3,6 +3,7 @@ import { Badge, Button } from 'antd';
 import {
   CalendarOutlined,
   ClockCircleOutlined,
+  DesktopOutlined,
   MedicineBoxOutlined,
   SearchOutlined,
   BellOutlined,
@@ -13,11 +14,13 @@ import WaitlistPage from './pages/WaitlistPage';
 import VaccinePage from './pages/VaccinePage';
 import RecallPage from './pages/RecallPage';
 import ObservationPage from './pages/ObservationPage';
+import StationWorkbenchPage from './pages/StationWorkbenchPage';
 import NotificationPanel from './components/NotificationPanel';
 import { useAppStore } from './store';
 import dayjs from 'dayjs';
 
 const menuItems = [
+  { key: 'workbench', label: '接种台工作台', icon: DesktopOutlined },
   { key: 'schedule', label: '接种排期', icon: CalendarOutlined },
   { key: 'waitlist', label: '候补补位', icon: TeamOutlined },
   { key: 'vaccine', label: '疫苗批次', icon: MedicineBoxOutlined },
@@ -26,23 +29,30 @@ const menuItems = [
 ];
 
 export default function App() {
-  const [activeKey, setActiveKey] = useState('schedule');
+  const [activeKey, setActiveKey] = useState('workbench');
   const [notificationOpen, setNotificationOpen] = useState(false);
   const {
     appointments,
     noShowAppointment,
     observationTimers,
-    completeObservation,
+    removeObservationTimer,
     addNotification,
     expireWaitlistNotifications,
     checkBatchExpiry,
     checkInventoryAlerts,
+    notifications,
   } = useAppStore();
 
   useEffect(() => {
     checkBatchExpiry();
     const { expiringBatches, lowStockVaccines } = checkInventoryAlerts();
-    if (expiringBatches.length > 0 || lowStockVaccines.length > 0) {
+    const hasRecentAlert = notifications.find(
+      (n) =>
+        n.type === 'system' &&
+        n.title === '库存预警' &&
+        dayjs(n.createdAt).isAfter(dayjs().subtract(24, 'hour'))
+    );
+    if ((expiringBatches.length > 0 || lowStockVaccines.length > 0) && !hasRecentAlert) {
       addNotification({
         type: 'system',
         title: '库存预警',
@@ -67,11 +77,11 @@ export default function App() {
         if (now.isAfter(dayjs(timer.endTime))) {
           const apt = appointments.find((a) => a.id === timer.appointmentId);
           if (apt && apt.status === 'observed') {
-            completeObservation(timer.appointmentId);
+            removeObservationTimer(timer.appointmentId);
             addNotification({
               type: 'observation',
-              title: '留观结束提醒',
-              content: `${apt.patientName} 留观时间已到，可以离开`,
+              title: '留观到点待处理',
+              content: `${apt.patientName}（${apt.vaccineName}）留观时间已到，请护士确认结束并登记结果`,
             });
           }
         }
@@ -81,7 +91,7 @@ export default function App() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [appointments, observationTimers, noShowAppointment, completeObservation, addNotification, expireWaitlistNotifications]);
+  }, [appointments, observationTimers, noShowAppointment, removeObservationTimer, addNotification, expireWaitlistNotifications]);
 
   useEffect(() => {
     const batchCheckInterval = setInterval(() => {
@@ -93,7 +103,13 @@ export default function App() {
   useEffect(() => {
     const inventoryCheckInterval = setInterval(() => {
       const { expiringBatches, lowStockVaccines } = checkInventoryAlerts();
-      if (expiringBatches.length > 0 || lowStockVaccines.length > 0) {
+      const hasRecentAlert = notifications.find(
+        (n) =>
+          n.type === 'system' &&
+          n.title === '库存预警' &&
+          dayjs(n.createdAt).isAfter(dayjs().subtract(24, 'hour'))
+      );
+      if ((expiringBatches.length > 0 || lowStockVaccines.length > 0) && !hasRecentAlert) {
         addNotification({
           type: 'system',
           title: '库存预警',
@@ -102,12 +118,14 @@ export default function App() {
       }
     }, 3600000);
     return () => clearInterval(inventoryCheckInterval);
-  }, [checkInventoryAlerts, addNotification]);
+  }, [checkInventoryAlerts, addNotification, notifications]);
 
   const unreadCount = useAppStore((state) => state.notifications.filter((n) => !n.read).length);
 
   const renderContent = () => {
     switch (activeKey) {
+      case 'workbench':
+        return <StationWorkbenchPage />;
       case 'schedule':
         return <SchedulePage />;
       case 'waitlist':
@@ -119,7 +137,7 @@ export default function App() {
       case 'observation':
         return <ObservationPage />;
       default:
-        return <SchedulePage />;
+        return <StationWorkbenchPage />;
     }
   };
 

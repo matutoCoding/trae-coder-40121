@@ -79,7 +79,7 @@ interface AppState {
     result: 'normal' | 'abnormal' | 'urgent',
     note?: string
   ) => void;
-  checkInventoryAlerts: () => { expiringBatches: VaccineBatch[]; lowStockVaccines: { vaccineId: string; vaccineName: string; remaining: number; threshold: number }[] };
+  checkInventoryAlerts: () => { expiringBatches: VaccineBatch[]; lowStockVaccines: { vaccineId: string; vaccineName: string; remaining: number; threshold: number; suggestOrder: number }[] };
 
   addNotification: (notification: Omit<Notification, 'id' | 'read' | 'createdAt'>) => void;
   markNotificationRead: (id: string) => void;
@@ -846,7 +846,11 @@ export const useAppStore = create<AppState>()(
 
         const lowStockVaccines = Object.values(vaccineStockMap)
           .filter((v) => v.remaining <= lowStockThreshold)
-          .map((v) => ({ ...v, threshold: lowStockThreshold }));
+          .map((v) => ({
+            ...v,
+            threshold: lowStockThreshold,
+            suggestOrder: Math.max(5, 10 - v.remaining),
+          }));
 
         return { expiringBatches, lowStockVaccines };
       },

@@ -56,7 +56,11 @@ export default function VaccinePage() {
     checkInventoryAlerts,
   } = useAppStore();
 
-  const { expiringBatches, lowStockVaccines } = checkInventoryAlerts();
+  const { expiringBatches, lowStockVaccines: rawLowStockVaccines } = checkInventoryAlerts();
+  const lowStockVaccines = rawLowStockVaccines.map((v: any) => ({
+    ...v,
+    suggestOrder: v.suggestOrder ?? Math.max(5, 10 - v.remaining),
+  }));
 
   const today = dayjs().startOf('day');
   const normalBatches = batches
@@ -391,6 +395,15 @@ export default function VaccinePage() {
                         render: (_: unknown, record: any) => (
                           <span style={{ fontWeight: 600, color: '#d48806' }}>
                             {record.remaining} 支
+                          </span>
+                        ),
+                      },
+                      {
+                        title: '建议补货',
+                        key: 'suggestOrder',
+                        render: (_: unknown, record: any) => (
+                          <span style={{ fontWeight: 700, color: '#d48806' }}>
+                            建议补 {record.suggestOrder} 支
                           </span>
                         ),
                       },

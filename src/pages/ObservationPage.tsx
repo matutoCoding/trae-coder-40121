@@ -119,9 +119,14 @@ export default function ObservationPage() {
     return Math.min(100, (elapsed / total) * 100);
   };
 
-  const availableBatches = batches.filter(
-    (b) => b.status === 'normal' && b.usedQuantity < b.quantity && !dayjs(b.expiryDate).isBefore(dayjs().startOf('day'))
-  );
+  const availableBatches = batches
+    .filter(
+      (b) =>
+        b.status === 'normal' &&
+        b.usedQuantity < b.quantity &&
+        !dayjs(b.expiryDate).isBefore(dayjs().startOf('day'))
+    )
+    .sort((a, b) => dayjs(a.expiryDate).unix() - dayjs(b.expiryDate).unix());
 
   const observingColumns = [
     { title: '患者姓名', dataIndex: 'patientName', key: 'patientName', width: 100 },
