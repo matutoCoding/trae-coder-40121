@@ -53,9 +53,15 @@ export default function VaccinePage() {
     updateBatch,
     deleteBatch,
     recallBatch: doRecallBatch,
+    checkInventoryAlerts,
   } = useAppStore();
 
-  const normalBatches = batches.filter((b) => b.status === 'normal' && !dayjs(b.expiryDate).isBefore(dayjs().startOf('day')));
+  const { expiringBatches, lowStockVaccines } = checkInventoryAlerts();
+
+  const today = dayjs().startOf('day');
+  const normalBatches = batches
+    .filter((b) => b.status === 'normal' && !dayjs(b.expiryDate).isBefore(today))
+    .sort((a, b) => dayjs(a.expiryDate).diff(today, 'day') - dayjs(b.expiryDate).diff(today, 'day'));
   const recalledBatches = batches.filter((b) => b.status === 'recalled');
   const expiredBatches = batches.filter(
     (b) => b.status === 'expired' || (b.status === 'normal' && dayjs(b.expiryDate).isBefore(dayjs().startOf('day')))
@@ -298,6 +304,113 @@ export default function VaccinePage() {
           </Col>
         </Row>
       </div>
+
+      {(expiringBatches.length > 0 || lowStockVaccines.length > 0) && (
+        <div className="page-card">
+          <Row gutter={16}>
+            <Col span={12}>
+              <Card
+                title={
+                  <Space>
+                    <WarningOutlined style={{ color: '#fa8c16' }} />
+                    <span>临期预警</span>
+                    <Tag color="orange">{expiringBatches.length} 个批次</Tag>
+                  </Space>
+                }
+                size="small"
+                style={{ borderColor: '#ffd591' }}
+                bodyStyle={{ padding: 0 }}
+              >
+                {expiringBatches.length > 0 ? (
+                  <Table
+                    size="small"
+                    dataSource={expiringBatches}
+                    rowKey="id"
+                    pagination={false}
+                    columns={[
+                      { title: '疫苗名称', dataIndex: 'vaccineName', key: 'vaccineName' },
+                      {
+                        title: '批号',
+                        dataIndex: 'batchNo',
+                        key: 'batchNo',
+                        render: (v: string) => <Tag color="blue">{v}</Tag>,
+                      },
+                      { title: '有效期至', dataIndex: 'expiryDate', key: 'expiryDate' },
+                      {
+                        title: '剩余数量',
+                        key: 'remaining',
+                        render: (_: unknown, record: VaccineBatch) => (
+                          <span style={{ fontWeight: 600, color: '#d46b08' }}>
+                            {record.quantity - record.usedQuantity} 支
+                          </span>
+                        ),
+                      },
+                      {
+                        title: '距到期',
+                        key: 'daysLeft',
+                        render: (_: unknown, record: VaccineBatch) => {
+                          const daysLeft = dayjs(record.expiryDate).diff(today, 'day');
+                          return (
+                            <Tag color={daysLeft <= 7 ? 'red' : 'orange'}>
+                              {daysLeft} 天
+                            </Tag>
+                          );
+                        },
+                      },
+                    ]}
+                  />
+                ) : (
+                  <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>暂无临期批次</div>
+                )}
+              </Card>
+            </Col>
+            <Col span={12}>
+              <Card
+                title={
+                  <Space>
+                    <ExclamationCircleOutlined style={{ color: '#faad14' }} />
+                    <span>低库存预警</span>
+                    <Tag color="gold">{lowStockVaccines.length} 种疫苗</Tag>
+                  </Space>
+                }
+                size="small"
+                style={{ borderColor: '#ffe58f' }}
+                bodyStyle={{ padding: 0 }}
+              >
+                {lowStockVaccines.length > 0 ? (
+                  <Table
+                    size="small"
+                    dataSource={lowStockVaccines}
+                    rowKey="vaccineId"
+                    pagination={false}
+                    columns={[
+                      { title: '疫苗名称', dataIndex: 'vaccineName', key: 'vaccineName' },
+                      {
+                        title: '剩余支数',
+                        key: 'remaining',
+                        render: (_: unknown, record: any) => (
+                          <span style={{ fontWeight: 600, color: '#d48806' }}>
+                            {record.remaining} 支
+                          </span>
+                        ),
+                      },
+                      {
+                        title: '预警阈值',
+                        key: 'threshold',
+                        render: (_: unknown, record: any) => (
+                          <Tag color="gold">≤ {record.threshold} 支</Tag>
+                        ),
+                      },
+                    ]}
+                  />
+                ) : (
+                  <div style={{ padding: 24, textAlign: 'center', color: '#999' }}>暂无低库存疫苗</div>
+                )}
+              </Card>
+            </Col>
+          </Row>
+        </div>
+      )}
 
       <div className="page-card">
         <Tabs defaultActiveKey="batches">

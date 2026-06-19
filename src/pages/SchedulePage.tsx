@@ -56,6 +56,7 @@ export default function SchedulePage() {
     addWaitlist,
     processWaitlistForSlot,
     getWaitlistCountForSlot,
+    getAvailableCountForSlot,
   } = useAppStore();
 
   const handleAddStation = () => {
@@ -181,6 +182,7 @@ export default function SchedulePage() {
       stationId: values.stationId,
       vaccineId: values.vaccineId,
       date: values.date.format('YYYY-MM-DD'),
+      slotId: waitlistSlot?.id,
       patientName: values.patientName,
       idCard: values.idCard,
       phone: values.phone,
@@ -343,10 +345,12 @@ export default function SchedulePage() {
                 {slotsByStation[station.id] ? (
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
                     {slotsByStation[station.id].map((slot) => {
-                      const isFull = slot.bookedCount >= slot.totalCapacity;
+                      const availableCount = getAvailableCountForSlot(slot.id);
                       const waitlistStats = getWaitlistCountForSlot(slot.id);
+                      const isFull = availableCount <= 0;
                       const hasNotified = waitlistStats.notified > 0;
                       const hasWaiting = waitlistStats.waiting > 0;
+                      const totalOccupied = slot.bookedCount + waitlistStats.notified;
 
                       return (
                         <Card
@@ -354,7 +358,7 @@ export default function SchedulePage() {
                           size="small"
                           style={{
                             width: 200,
-                            borderColor: isFull ? '#ff4d4f' : '#d9d9d9',
+                            borderColor: isFull ? '#ff4d4f' : hasNotified ? '#1890ff' : '#d9d9d9',
                           }}
                           styles={{ body: { padding: 12 } }}
                           title={
@@ -363,8 +367,8 @@ export default function SchedulePage() {
                             </div>
                           }
                           extra={
-                            <Tag color={isFull ? 'red' : 'green'}>
-                              {isFull ? '已满' : '可预约'}
+                            <Tag color={isFull ? 'red' : hasNotified ? 'blue' : 'green'}>
+                              {isFull ? '已满' : hasNotified ? '补位中' : '可预约'}
                             </Tag>
                           }
                         >
@@ -372,11 +376,14 @@ export default function SchedulePage() {
                             <span style={{ color: '#666' }}>疫苗：</span>
                             <span>{slot.vaccineName}</span>
                           </div>
-                          <div style={{ marginBottom: 8, fontSize: 13 }}>
-                            <span style={{ color: '#666' }}>预约：</span>
-                            <span style={{ color: isFull ? '#ff4d4f' : '#52c41a', fontWeight: 500 }}>
-                              {slot.bookedCount}/{slot.totalCapacity}
+                          <div style={{ marginBottom: 4, fontSize: 13 }}>
+                            <span style={{ color: '#666' }}>已占用：</span>
+                            <span style={{ fontWeight: 500 }}>
+                              {totalOccupied}/{slot.totalCapacity}
                             </span>
+                          </div>
+                          <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>
+                            已预约 {slot.bookedCount} · 待确认 {waitlistStats.notified} · 可约 {availableCount}
                           </div>
                           <div style={{ marginBottom: 10, display: 'flex', gap: 8, fontSize: 12 }}>
                             <Tag color="orange" style={{ margin: 0 }}>
@@ -397,31 +404,30 @@ export default function SchedulePage() {
                                 预约登记
                               </Button>
                             )}
-                            {!isFull && hasWaiting && !hasNotified && (
+                            {hasWaiting && !hasNotified && (
                               <Button
                                 size="small"
                                 block
                                 icon={<BellOutlined />}
                                 onClick={() => handleNotifyNext(slot.id)}
+                                disabled={availableCount <= 0}
                               >
                                 通知下一位候补
                               </Button>
                             )}
-                            {!isFull && hasNotified && (
+                            {hasNotified && (
                               <Button size="small" block disabled>
                                 已通知待确认
                               </Button>
                             )}
-                            {isFull && (
-                              <Button
-                                size="small"
-                                block
-                                icon={<UserAddOutlined />}
-                                onClick={() => handleWaitlistFromSlot(slot)}
-                              >
-                                登记候补
-                              </Button>
-                            )}
+                            <Button
+                              size="small"
+                              block
+                              icon={<UserAddOutlined />}
+                              onClick={() => handleWaitlistFromSlot(slot)}
+                            >
+                              登记候补
+                            </Button>
                           </Space>
                         </Card>
                       );
@@ -592,7 +598,7 @@ export default function SchedulePage() {
               </div>
               <div>
                 <strong>剩余名额：</strong>
-                {selectedSlot.totalCapacity - selectedSlot.bookedCount}
+                {getAvailableCountForSlot(selectedSlot.id)}
               </div>
             </div>
           )}

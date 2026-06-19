@@ -61,6 +61,7 @@ interface AppState {
     stationId: string;
     vaccineId: string;
     date: string;
+    slotId?: string;
     patientName: string;
     idCard: string;
     phone: string;
@@ -71,6 +72,14 @@ interface AppState {
   declineWaitlist: (id: string) => void;
   expireWaitlistNotifications: () => void;
   getWaitlistCountForSlot: (slotId: string) => { waiting: number; notified: number };
+  getAvailableCountForSlot: (slotId: string) => number;
+
+  completeObservationWithResult: (
+    id: string,
+    result: 'normal' | 'abnormal' | 'urgent',
+    note?: string
+  ) => void;
+  checkInventoryAlerts: () => { expiringBatches: VaccineBatch[]; lowStockVaccines: { vaccineId: string; vaccineName: string; remaining: number; threshold: number }[] };
 
   addNotification: (notification: Omit<Notification, 'id' | 'read' | 'createdAt'>) => void;
   markNotificationRead: (id: string) => void;
@@ -322,7 +331,9 @@ export const useAppStore = create<AppState>()(
 
       createAppointment: (data) => {
         const slot = get().slots.find((s) => s.id === data.slotId);
-        if (!slot || slot.bookedCount >= slot.totalCapacity) return null;
+        if (!slot) return null;
+        const availableCount = get().getAvailableCountForSlot(data.slotId);
+        if (availableCount <= 0) return null;
 
         const appointment: Appointment = {
           id: uuidv4(),
@@ -444,6 +455,10 @@ export const useAppStore = create<AppState>()(
       },
 
       completeObservation: (id) => {
+        get().completeObservationWithResult(id, 'normal');
+      },
+
+      completeObservationWithResult: (id, result, note) => {
         const appointment = get().appointments.find((a) => a.id === id);
         if (!appointment) return;
 
@@ -462,7 +477,16 @@ export const useAppStore = create<AppState>()(
           vaccinationTime: appointment.vaccinationTime!,
           observationStartTime: appointment.observationStartTime!,
           observationEndTime: dayjs().toISOString(),
-          status: 'normal',
+          observationResult: result,
+          observationNote: note,
+          status: result === 'normal' ? 'normal' : 'adverse_reaction',
+          adverseReaction: result !== 'normal' ? note : undefined,
+        };
+
+        const recordStatusText: Record<string, string> = {
+          normal: '正常',
+          abnormal: '异常',
+          urgent: '紧急',
         };
 
         set((state) => ({
@@ -472,6 +496,14 @@ export const useAppStore = create<AppState>()(
           records: [...state.records, record],
           observationTimers: state.observationTimers.filter((t) => t.appointmentId !== id),
         }));
+
+        if (result !== 'normal') {
+          get().addNotification({
+            type: 'observation',
+            title: '留观异常提醒',
+            content: `${appointment.patientName}（${appointment.phone}）留观结果：${recordStatusText[result]}${note ? ' - ' + note : ''}`,
+          });
+        }
       },
 
       noShowAppointment: (id) => {
@@ -504,10 +536,23 @@ export const useAppStore = create<AppState>()(
         const vaccine = get().vaccines.find((v) => v.id === data.vaccineId);
         if (!station || !vaccine) return;
 
+        const slot = data.slotId ? get().slots.find((s) => s.id === data.slotId) : null;
+
+        const matchConditions = (w: WaitlistItem) => {
+          if (data.slotId) {
+            return w.slotId === data.slotId && w.status === 'waiting';
+          }
+          return (
+            w.stationId === data.stationId &&
+            w.vaccineId === data.vaccineId &&
+            w.date === data.date &&
+            w.slotId === null &&
+            w.status === 'waiting'
+          );
+        };
+
         const maxPriority = get()
-          .waitlist.filter(
-            (w) => w.stationId === data.stationId && w.vaccineId === data.vaccineId && w.date === data.date && w.status === 'waiting'
-          )
+          .waitlist.filter(matchConditions)
           .reduce((max, w) => Math.max(max, w.priority), 0);
 
         const item: WaitlistItem = {
@@ -517,6 +562,9 @@ export const useAppStore = create<AppState>()(
           vaccineId: data.vaccineId,
           vaccineName: vaccine.name,
           date: data.date,
+          slotId: data.slotId ?? null,
+          slotStartTime: slot?.startTime,
+          slotEndTime: slot?.endTime,
           patientName: data.patientName,
           idCard: data.idCard,
           phone: data.phone,
@@ -544,41 +592,58 @@ export const useAppStore = create<AppState>()(
 
         const waiting = get().waitlist.filter(
           (w) =>
-            w.stationId === slot.stationId &&
-            w.vaccineId === slot.vaccineId &&
-            w.date === slot.date &&
-            w.status === 'waiting'
+            w.status === 'waiting' &&
+            (w.slotId === slotId ||
+              (w.slotId === null &&
+                w.stationId === slot.stationId &&
+                w.vaccineId === slot.vaccineId &&
+                w.date === slot.date))
         ).length;
 
         const notified = get().waitlist.filter(
-          (w) =>
-            w.slotId === slotId &&
-            w.status === 'notified'
+          (w) => w.slotId === slotId && w.status === 'notified'
         ).length;
 
         return { waiting, notified };
+      },
+
+      getAvailableCountForSlot: (slotId) => {
+        const slot = get().slots.find((s) => s.id === slotId);
+        if (!slot) return 0;
+        const { notified } = get().getWaitlistCountForSlot(slotId);
+        return Math.max(0, slot.totalCapacity - slot.bookedCount - notified);
       },
 
       processWaitlistForSlot: (slotId) => {
         const slot = get().slots.find((s) => s.id === slotId);
         if (!slot) return null;
 
-        if (slot.bookedCount >= slot.totalCapacity) return null;
+        const availableCount = get().getAvailableCountForSlot(slotId);
+        if (availableCount <= 0) return null;
 
         const hasNotifiedForSlot = get().waitlist.some(
           (w) => w.slotId === slotId && w.status === 'notified'
         );
         if (hasNotifiedForSlot) return null;
 
-        const waitingList = get()
+        const exactMatch = get()
+          .waitlist.filter(
+            (w) => w.slotId === slotId && w.status === 'waiting'
+          )
+          .sort((a, b) => a.priority - b.priority);
+
+        const generalMatch = get()
           .waitlist.filter(
             (w) =>
+              w.slotId === null &&
               w.stationId === slot.stationId &&
               w.vaccineId === slot.vaccineId &&
               w.date === slot.date &&
               w.status === 'waiting'
           )
           .sort((a, b) => a.priority - b.priority);
+
+        const waitingList = [...exactMatch, ...generalMatch];
 
         if (waitingList.length === 0) return null;
 
@@ -746,6 +811,44 @@ export const useAppStore = create<AppState>()(
 
       createRecall: (batchId, reason) => {
         get().recallBatch(batchId, reason);
+      },
+
+      checkInventoryAlerts: () => {
+        const today = dayjs().startOf('day');
+        const expiringThresholdDays = 30;
+        const lowStockThreshold = 5;
+
+        const expiringBatches = get().batches.filter(
+          (b) =>
+            b.status === 'normal' &&
+            !dayjs(b.expiryDate).isBefore(today) &&
+            dayjs(b.expiryDate).diff(today, 'day') <= expiringThresholdDays &&
+            b.quantity - b.usedQuantity > 0
+        );
+
+        const vaccineStockMap: Record<string, { vaccineId: string; vaccineName: string; remaining: number }> = {};
+        get().batches
+          .filter(
+            (b) =>
+              b.status === 'normal' &&
+              !dayjs(b.expiryDate).isBefore(today)
+          )
+          .forEach((b) => {
+            if (!vaccineStockMap[b.vaccineId]) {
+              vaccineStockMap[b.vaccineId] = {
+                vaccineId: b.vaccineId,
+                vaccineName: b.vaccineName,
+                remaining: 0,
+              };
+            }
+            vaccineStockMap[b.vaccineId].remaining += b.quantity - b.usedQuantity;
+          });
+
+        const lowStockVaccines = Object.values(vaccineStockMap)
+          .filter((v) => v.remaining <= lowStockThreshold)
+          .map((v) => ({ ...v, threshold: lowStockThreshold }));
+
+        return { expiringBatches, lowStockVaccines };
       },
     }),
     {

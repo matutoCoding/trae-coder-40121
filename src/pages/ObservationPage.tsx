@@ -13,8 +13,10 @@ import {
   Col,
   message,
   Progress,
+  Radio,
+  Input,
 } from 'antd';
-import { PlayCircleOutlined, CheckCircleOutlined, ClockCircleOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, CheckCircleOutlined, ClockCircleOutlined, WarningOutlined } from '@ant-design/icons';
 import { useAppStore } from '../store';
 import dayjs from 'dayjs';
 import type { Appointment } from '../types';
@@ -22,15 +24,20 @@ import type { Appointment } from '../types';
 export default function ObservationPage() {
   const [now, setNow] = useState(dayjs());
   const [vaccinateModalOpen, setVaccinateModalOpen] = useState(false);
+  const [completeModalOpen, setCompleteModalOpen] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+  const [completingAppointmentId, setCompletingAppointmentId] = useState<string | null>(null);
+  const [observationResult, setObservationResult] = useState<'normal' | 'abnormal' | 'urgent'>('normal');
+  const [observationNote, setObservationNote] = useState('');
   const [form] = Form.useForm();
 
   const {
     appointments,
     batches,
+    records,
     vaccinateAppointment,
     startObservation,
-    completeObservation,
+    completeObservationWithResult,
     observationTimers,
   } = useAppStore();
 
@@ -67,14 +74,31 @@ export default function ObservationPage() {
   };
 
   const handleCompleteObservation = (id: string) => {
-    Modal.confirm({
-      title: '结束留观',
-      content: '确认留观结束，患者可以离开？',
-      onOk: () => {
-        completeObservation(id);
-        message.success('留观结束');
-      },
-    });
+    setCompletingAppointmentId(id);
+    setObservationResult('normal');
+    setObservationNote('');
+    setCompleteModalOpen(true);
+  };
+
+  const handleCompleteSubmit = () => {
+    if (!completingAppointmentId) return;
+    if (observationResult !== 'normal' && !observationNote.trim()) {
+      message.warning('请填写异常说明');
+      return;
+    }
+    completeObservationWithResult(
+      completingAppointmentId,
+      observationResult,
+      observationResult !== 'normal' ? observationNote : undefined
+    );
+    const resultText: Record<string, string> = {
+      normal: '正常',
+      abnormal: '一般异常',
+      urgent: '紧急异常',
+    };
+    message.success(`留观结束，结果：${resultText[observationResult]}`);
+    setCompleteModalOpen(false);
+    setCompletingAppointmentId(null);
   };
 
   const formatTime = (seconds: number) => {
@@ -225,6 +249,62 @@ export default function ObservationPage() {
     },
   ];
 
+  const completedRecordsToday = records.filter((r) =>
+    dayjs(r.observationEndTime).isSame(dayjs(), 'day')
+  );
+
+  const completedColumns = [
+    { title: '患者姓名', dataIndex: 'patientName', key: 'patientName', width: 100 },
+    { title: '疫苗', dataIndex: 'vaccineName', key: 'vaccineName', width: 120 },
+    { title: '接种台', dataIndex: 'stationName', key: 'stationName', width: 100 },
+    {
+      title: '批次号',
+      dataIndex: 'batchNo',
+      key: 'batchNo',
+      width: 120,
+      render: (v: string) => <Tag color="blue">{v}</Tag>,
+    },
+    {
+      title: '留观结果',
+      dataIndex: 'observationResult',
+      key: 'observationResult',
+      width: 120,
+      render: (result: 'normal' | 'abnormal' | 'urgent') => {
+        const map: Record<string, { text: string; color: string; icon?: React.ReactNode }> = {
+          normal: { text: '正常', color: 'green' },
+          abnormal: { text: '一般异常', color: 'orange', icon: <WarningOutlined /> },
+          urgent: { text: '紧急异常', color: 'red', icon: <WarningOutlined /> },
+        };
+        const r = map[result];
+        return (
+          <Tag color={r.color} icon={r.icon}>
+            {r.text}
+          </Tag>
+        );
+      },
+    },
+    {
+      title: '异常说明',
+      dataIndex: 'observationNote',
+      key: 'observationNote',
+      render: (note: string | undefined, record: any) => {
+        if (record.observationResult === 'normal') return '-';
+        return (
+          <span style={{ color: '#ff4d4f' }}>
+            {note || '无'}
+          </span>
+        );
+      },
+    },
+    {
+      title: '完成时间',
+      dataIndex: 'observationEndTime',
+      key: 'observationEndTime',
+      width: 160,
+      render: (time: string) => dayjs(time).format('HH:mm:ss'),
+    },
+  ];
+
   return (
     <div>
       <div className="page-card">
@@ -301,6 +381,7 @@ export default function ObservationPage() {
               <Tag color="gold">{checkedInList.length + vaccinatedList.length} 人</Tag>
             </Space>
           }
+          style={{ marginBottom: 16 }}
         >
           {checkedInList.length + vaccinatedList.length > 0 ? (
             <Table
@@ -312,6 +393,34 @@ export default function ObservationPage() {
           ) : (
             <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
               暂无等待人员
+            </div>
+          )}
+        </Card>
+
+        <Card
+          title={
+            <Space>
+              <CheckCircleOutlined style={{ color: '#52c41a' }} />
+              <span>今日已完成</span>
+              <Tag color="green">{completedRecordsToday.length} 人</Tag>
+              {completedRecordsToday.filter((r) => r.observationResult !== 'normal').length > 0 && (
+                <Tag color="red" icon={<WarningOutlined />}>
+                  {completedRecordsToday.filter((r) => r.observationResult !== 'normal').length} 例异常
+                </Tag>
+              )}
+            </Space>
+          }
+        >
+          {completedRecordsToday.length > 0 ? (
+            <Table
+              columns={completedColumns}
+              dataSource={completedRecordsToday}
+              rowKey="id"
+              pagination={false}
+            />
+          ) : (
+            <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+              今日暂无完成记录
             </div>
           )}
         </Card>
@@ -362,6 +471,55 @@ export default function ObservationPage() {
                 </Button>
               </Form.Item>
             </Form>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        title="结束留观 - 结果登记"
+        open={completeModalOpen}
+        onOk={handleCompleteSubmit}
+        onCancel={() => {
+          setCompleteModalOpen(false);
+          setCompletingAppointmentId(null);
+        }}
+        okText="确认结束"
+        cancelText="取消"
+        width={520}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontWeight: 600, marginBottom: 12 }}>留观结果：</div>
+          <Radio.Group
+            value={observationResult}
+            onChange={(e) => setObservationResult(e.target.value)}
+            style={{ width: '100%' }}
+          >
+            <Space direction="vertical">
+              <Radio value="normal">正常 - 无不良反应，患者可以离开</Radio>
+              <Radio value="abnormal">
+                <span style={{ color: '#fa8c16' }}>一般异常</span> - 有轻微不良反应
+              </Radio>
+              <Radio value="urgent">
+                <span style={{ color: '#ff4d4f', fontWeight: 600 }}>紧急异常</span> - 出现严重反应需紧急处理
+              </Radio>
+            </Space>
+          </Radio.Group>
+        </div>
+
+        {observationResult !== 'normal' && (
+          <div>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>
+              <span style={{ color: '#ff4d4f' }}>* </span>
+              异常说明：
+            </div>
+            <Input.TextArea
+              value={observationNote}
+              onChange={(e) => setObservationNote(e.target.value)}
+              placeholder="请详细描述异常情况、症状、处理措施等..."
+              rows={4}
+              showCount
+              maxLength={500}
+            />
           </div>
         )}
       </Modal>

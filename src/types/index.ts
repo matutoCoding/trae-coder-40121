@@ -76,14 +76,14 @@ export interface WaitlistItem {
   vaccineId: string;
   vaccineName: string;
   date: string;
+  slotId: string | null;
+  slotStartTime?: string;
+  slotEndTime?: string;
   patientName: string;
   idCard: string;
   phone: string;
   priority: number;
   status: 'waiting' | 'notified' | 'confirmed' | 'cancelled' | 'expired';
-  slotId?: string;
-  slotStartTime?: string;
-  slotEndTime?: string;
   notifiedAt?: string;
   expiresAt?: string;
   createdAt: string;
@@ -104,6 +104,8 @@ export interface VaccinationRecord {
   vaccinationTime: string;
   observationStartTime: string;
   observationEndTime: string;
+  observationResult: 'normal' | 'abnormal' | 'urgent';
+  observationNote?: string;
   status: 'normal' | 'adverse_reaction' | 'recalled';
   adverseReaction?: string;
 }

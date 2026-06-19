@@ -126,17 +126,27 @@ export default function RecallPage() {
     },
     {
       title: '留观结果',
-      key: 'observation',
-      render: (_: unknown, record: VaccinationRecord) => {
-        const start = dayjs(record.observationStartTime);
-        const end = dayjs(record.observationEndTime);
-        const duration = end.diff(start, 'minute');
-        return (
-          <Tag color="green">
-            留观 {duration} 分钟，正常
-          </Tag>
-        );
+      key: 'observationResult',
+      dataIndex: 'observationResult',
+      render: (result: 'normal' | 'abnormal' | 'urgent') => {
+        const colorMap: Record<string, string> = {
+          normal: 'green',
+          abnormal: 'orange',
+          urgent: 'red',
+        };
+        const textMap: Record<string, string> = {
+          normal: '正常',
+          abnormal: '异常',
+          urgent: '紧急',
+        };
+        return <Tag color={colorMap[result]}>{textMap[result]}</Tag>;
       },
+    },
+    {
+      title: '异常说明',
+      dataIndex: 'observationNote',
+      key: 'observationNote',
+      render: (note?: string) => note || '-',
     },
     {
       title: '记录状态',

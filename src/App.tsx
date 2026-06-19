@@ -36,10 +36,19 @@ export default function App() {
     addNotification,
     expireWaitlistNotifications,
     checkBatchExpiry,
+    checkInventoryAlerts,
   } = useAppStore();
 
   useEffect(() => {
     checkBatchExpiry();
+    const { expiringBatches, lowStockVaccines } = checkInventoryAlerts();
+    if (expiringBatches.length > 0 || lowStockVaccines.length > 0) {
+      addNotification({
+        type: 'system',
+        title: '库存预警',
+        content: `临期批次 ${expiringBatches.length} 个，低库存疫苗 ${lowStockVaccines.length} 种，请及时处理`,
+      });
+    }
   }, []);
 
   useEffect(() => {
@@ -80,6 +89,20 @@ export default function App() {
     }, 60000);
     return () => clearInterval(batchCheckInterval);
   }, [checkBatchExpiry]);
+
+  useEffect(() => {
+    const inventoryCheckInterval = setInterval(() => {
+      const { expiringBatches, lowStockVaccines } = checkInventoryAlerts();
+      if (expiringBatches.length > 0 || lowStockVaccines.length > 0) {
+        addNotification({
+          type: 'system',
+          title: '库存预警',
+          content: `临期批次 ${expiringBatches.length} 个，低库存疫苗 ${lowStockVaccines.length} 种，请及时处理`,
+        });
+      }
+    }, 3600000);
+    return () => clearInterval(inventoryCheckInterval);
+  }, [checkInventoryAlerts, addNotification]);
 
   const unreadCount = useAppStore((state) => state.notifications.filter((n) => !n.read).length);
 

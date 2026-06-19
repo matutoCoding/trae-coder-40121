@@ -39,6 +39,7 @@ export default function WaitlistPage() {
     stations,
     vaccines,
     slots,
+    getWaitlistCountForSlot,
   } = useAppStore();
 
   useEffect(() => {
@@ -47,6 +48,8 @@ export default function WaitlistPage() {
   }, []);
 
   const waitingList = waitlist.filter((w) => w.status === 'waiting' && w.date === filterDate);
+  const exactWaitingList = waitingList.filter((w) => w.slotId !== null);
+  const generalWaitingList = waitingList.filter((w) => w.slotId === null);
   const notifiedList = waitlist.filter((w) => w.status === 'notified');
   const historyList = waitlist.filter((w) => w.status !== 'waiting' && w.status !== 'notified');
 
@@ -134,6 +137,21 @@ export default function WaitlistPage() {
     { title: '接种台', dataIndex: 'stationName', key: 'stationName' },
     { title: '疫苗', dataIndex: 'vaccineName', key: 'vaccineName' },
     { title: '候补日期', dataIndex: 'date', key: 'date' },
+    {
+      title: '目标时段',
+      key: 'targetSlot',
+      width: 130,
+      render: (_: unknown, record: WaitlistItem) => {
+        if (record.slotId && record.slotStartTime && record.slotEndTime) {
+          return (
+            <Tag color="blue">
+              {record.slotStartTime} - {record.slotEndTime}
+            </Tag>
+          );
+        }
+        return <Tag color="default">全天通用</Tag>;
+      },
+    },
     {
       title: '登记时间',
       dataIndex: 'createdAt',
@@ -301,16 +319,26 @@ export default function WaitlistPage() {
     <div>
       <div className="page-card">
         <Row gutter={16}>
-          <Col span={6}>
+          <Col span={5}>
             <Card>
               <Statistic
-                title="候补等待中"
-                value={waitingList.length}
+                title="精确时段候补"
+                value={exactWaitingList.length}
+                valueStyle={{ color: '#fa541c' }}
+                prefix={<ClockCircleOutlined />}
+              />
+            </Card>
+          </Col>
+          <Col span={5}>
+            <Card>
+              <Statistic
+                title="全天通用候补"
+                value={generalWaitingList.length}
                 valueStyle={{ color: '#faad14' }}
               />
             </Card>
           </Col>
-          <Col span={6}>
+          <Col span={5}>
             <Card>
               <Statistic
                 title="已通知待确认"
@@ -319,7 +347,7 @@ export default function WaitlistPage() {
               />
             </Card>
           </Col>
-          <Col span={6}>
+          <Col span={5}>
             <Card>
               <Statistic
                 title="今日可补位时段"
@@ -328,7 +356,7 @@ export default function WaitlistPage() {
               />
             </Card>
           </Col>
-          <Col span={6}>
+          <Col span={4}>
             <Card>
               <Statistic title="历史候补数" value={historyList.length} />
             </Card>
@@ -390,13 +418,18 @@ export default function WaitlistPage() {
                   const hasNotifiedForSlot = waitlist.some(
                     (w) => w.slotId === slot.id && w.status === 'notified'
                   );
-                  const waitingCount = waitlist.filter(
+                  const exactCount = waitlist.filter(
+                    (w) => w.slotId === slot.id && w.status === 'waiting'
+                  ).length;
+                  const generalCount = waitlist.filter(
                     (w) =>
+                      w.slotId === null &&
                       w.stationId === slot.stationId &&
                       w.vaccineId === slot.vaccineId &&
                       w.date === slot.date &&
                       w.status === 'waiting'
                   ).length;
+                  const totalWaiting = exactCount + generalCount;
                   return (
                     <Card
                       key={slot.id}
@@ -415,14 +448,19 @@ export default function WaitlistPage() {
                       <p style={{ marginBottom: 4, color: '#999', fontSize: 13 }}>
                         已预约：{slot.bookedCount}/{slot.totalCapacity}
                       </p>
-                      <p style={{ marginBottom: 12, color: '#faad14', fontSize: 13 }}>
-                        候补等待：{waitingCount} 人
-                      </p>
+                      <div style={{ marginBottom: 12, fontSize: 13 }}>
+                        <p style={{ marginBottom: 2, color: '#fa541c' }}>
+                          精确时段候补：{exactCount} 人
+                        </p>
+                        <p style={{ marginBottom: 0, color: '#faad14' }}>
+                          全天通用候补：{generalCount} 人
+                        </p>
+                      </div>
                       {hasNotifiedForSlot ? (
                         <Button block disabled type="default">
                           已通知候补人待确认
                         </Button>
-                      ) : waitingCount > 0 ? (
+                      ) : totalWaiting > 0 ? (
                         <Button
                           type="primary"
                           block
