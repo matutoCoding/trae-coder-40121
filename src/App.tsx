@@ -28,7 +28,19 @@ const menuItems = [
 export default function App() {
   const [activeKey, setActiveKey] = useState('schedule');
   const [notificationOpen, setNotificationOpen] = useState(false);
-  const { appointments, noShowAppointment, observationTimers, completeObservation, addNotification } = useAppStore();
+  const {
+    appointments,
+    noShowAppointment,
+    observationTimers,
+    completeObservation,
+    addNotification,
+    expireWaitlistNotifications,
+    checkBatchExpiry,
+  } = useAppStore();
+
+  useEffect(() => {
+    checkBatchExpiry();
+  }, []);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -55,10 +67,19 @@ export default function App() {
           }
         }
       });
+
+      expireWaitlistNotifications();
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [appointments, observationTimers, noShowAppointment, completeObservation, addNotification]);
+  }, [appointments, observationTimers, noShowAppointment, completeObservation, addNotification, expireWaitlistNotifications]);
+
+  useEffect(() => {
+    const batchCheckInterval = setInterval(() => {
+      checkBatchExpiry();
+    }, 60000);
+    return () => clearInterval(batchCheckInterval);
+  }, [checkBatchExpiry]);
 
   const unreadCount = useAppStore((state) => state.notifications.filter((n) => !n.read).length);
 

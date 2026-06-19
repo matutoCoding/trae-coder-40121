@@ -96,7 +96,7 @@ export default function ObservationPage() {
   };
 
   const availableBatches = batches.filter(
-    (b) => b.status === 'normal' && b.usedQuantity < b.quantity
+    (b) => b.status === 'normal' && b.usedQuantity < b.quantity && !dayjs(b.expiryDate).isBefore(dayjs().startOf('day'))
   );
 
   const observingColumns = [

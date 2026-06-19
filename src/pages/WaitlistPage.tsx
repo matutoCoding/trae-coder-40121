@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Table,
   Button,
@@ -16,7 +16,7 @@ import {
   message,
   Tabs,
 } from 'antd';
-import { PlusOutlined, CloseOutlined, BellOutlined } from '@ant-design/icons';
+import { PlusOutlined, CloseOutlined, BellOutlined, CheckOutlined, StopOutlined } from '@ant-design/icons';
 import { useAppStore } from '../store';
 import dayjs from 'dayjs';
 import type { WaitlistItem } from '../types';
@@ -27,16 +27,24 @@ export default function WaitlistPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
   const [filterDate, setFilterDate] = useState(dayjs().format('YYYY-MM-DD'));
+  const [now, setNow] = useState(dayjs());
 
   const {
     waitlist,
     addWaitlist,
     cancelWaitlist,
     processWaitlistForSlot,
+    confirmWaitlist,
+    declineWaitlist,
     stations,
     vaccines,
     slots,
   } = useAppStore();
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(dayjs()), 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   const waitingList = waitlist.filter((w) => w.status === 'waiting' && w.date === filterDate);
   const notifiedList = waitlist.filter((w) => w.status === 'notified');
@@ -78,6 +86,34 @@ export default function WaitlistPage() {
     } else {
       message.warning('该时段暂无候补人员');
     }
+  };
+
+  const handleConfirm = (id: string) => {
+    const result = confirmWaitlist(id);
+    if (result) {
+      message.success('已确认补位，预约创建成功');
+    } else {
+      message.error('确认失败，名额可能已被占用');
+    }
+  };
+
+  const handleDecline = (id: string) => {
+    Modal.confirm({
+      title: '确认放弃',
+      content: '确定要放弃该补位机会吗？放弃后将通知下一位候补人员。',
+      onOk: () => {
+        declineWaitlist(id);
+        message.success('已放弃补位');
+      },
+    });
+  };
+
+  const formatCountdown = (expiresAt: string) => {
+    const remaining = dayjs(expiresAt).diff(now, 'second');
+    if (remaining <= 0) return '00:00';
+    const mins = Math.floor(remaining / 60);
+    const secs = remaining % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
   const columns = [
@@ -130,38 +166,92 @@ export default function WaitlistPage() {
       render: (time: string) => dayjs(time).format('MM-DD HH:mm'),
     },
     {
-      title: '有效期至',
+      title: '剩余时间',
       dataIndex: 'expiresAt',
-      key: 'expiresAt',
-      render: (time: string) => {
-        const isExpired = dayjs().isAfter(dayjs(time));
+      key: 'countdown',
+      render: (expiresAt: string) => {
+        const remaining = dayjs(expiresAt).diff(now, 'second');
+        const isUrgent = remaining < 300;
         return (
-          <Tag color={isExpired ? 'red' : 'green'}>
-            {dayjs(time).format('HH:mm')}
-            {isExpired ? ' (已过期)' : ''}
-          </Tag>
+          <span
+            style={{
+              fontSize: 16,
+              fontWeight: 600,
+              color: remaining <= 0 ? '#ff4d4f' : isUrgent ? '#fa8c16' : '#1890ff',
+            }}
+            className={isUrgent && remaining > 0 ? 'timer-warning' : ''}
+          >
+            {formatCountdown(expiresAt)}
+          </span>
         );
       },
     },
     {
-      title: '状态',
+      title: '操作',
+      key: 'action',
+      width: 180,
+      render: (_: unknown, record: WaitlistItem) => {
+        const remaining = dayjs(record.expiresAt).diff(now, 'second');
+        if (remaining <= 0) {
+          return <Tag color="red">已超时</Tag>;
+        }
+        return (
+          <Space>
+            <Button
+              type="primary"
+              size="small"
+              icon={<CheckOutlined />}
+              onClick={() => handleConfirm(record.id)}
+            >
+              确认补位
+            </Button>
+            <Button
+              size="small"
+              danger
+              icon={<StopOutlined />}
+              onClick={() => handleDecline(record.id)}
+            >
+              放弃
+            </Button>
+          </Space>
+        );
+      },
+    },
+  ];
+
+  const historyStatusMap: Record<string, { text: string; color: string }> = {
+    confirmed: { text: '已确认', color: 'green' },
+    expired: { text: '已过期', color: 'red' },
+    cancelled: { text: '已放弃', color: 'default' },
+  };
+
+  const historyColumns = [
+    { title: '患者姓名', dataIndex: 'patientName', key: 'patientName' },
+    { title: '联系电话', dataIndex: 'phone', key: 'phone' },
+    { title: '接种台', dataIndex: 'stationName', key: 'stationName' },
+    { title: '疫苗', dataIndex: 'vaccineName', key: 'vaccineName' },
+    { title: '日期', dataIndex: 'date', key: 'date' },
+    {
+      title: '通知时间',
+      dataIndex: 'notifiedAt',
+      key: 'notifiedAt',
+      render: (time: string) => time ? dayjs(time).format('MM-DD HH:mm') : '-',
+    },
+    {
+      title: '最终状态',
       dataIndex: 'status',
       key: 'status',
       render: (status: string) => {
-        const colorMap: Record<string, string> = {
-          notified: 'blue',
-          confirmed: 'green',
-          expired: 'red',
-          cancelled: 'default',
-        };
-        const textMap: Record<string, string> = {
-          notified: '已通知',
-          confirmed: '已确认',
-          expired: '已过期',
-          cancelled: '已取消',
-        };
-        return <Tag color={colorMap[status]}>{textMap[status]}</Tag>;
+        const s = historyStatusMap[status];
+        if (!s) return <Tag>{status}</Tag>;
+        return <Tag color={s.color}>{s.text}</Tag>;
       },
+    },
+    {
+      title: '排位',
+      dataIndex: 'priority',
+      key: 'priority',
+      render: (priority: number) => `#${priority}`,
     },
   ];
 
@@ -222,14 +312,20 @@ export default function WaitlistPage() {
             />
           </TabPane>
 
-          <TabPane tab="已通知补位" key="notified">
-            <Table
-              columns={notifiedColumns}
-              dataSource={notifiedList}
-              rowKey="id"
-              pagination={{ pageSize: 10 }}
-              locale={{ emptyText: '暂无通知记录' }}
-            />
+          <TabPane tab={`已通知补位 (${notifiedList.length})`} key="notified">
+            {notifiedList.length > 0 ? (
+              <Table
+                columns={notifiedColumns}
+                dataSource={notifiedList}
+                rowKey="id"
+                pagination={{ pageSize: 10 }}
+                locale={{ emptyText: '暂无通知记录' }}
+              />
+            ) : (
+              <div style={{ textAlign: 'center', padding: 40, color: '#999' }}>
+                暂无待确认的补位通知
+              </div>
+            )}
           </TabPane>
 
           <TabPane tab="手动补位" key="manual">
@@ -242,34 +338,60 @@ export default function WaitlistPage() {
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
               {availableSlots.length > 0 ? (
-                availableSlots.map((slot) => (
-                  <Card
-                    key={slot.id}
-                    size="small"
-                    title={`${slot.stationName} - ${slot.startTime}~${slot.endTime}`}
-                    style={{ width: 280 }}
-                    extra={
-                      <Tag color="green">
-                        {slot.totalCapacity - slot.bookedCount} 空位
-                      </Tag>
-                    }
-                  >
-                    <p style={{ marginBottom: 8 }}>
-                      疫苗：{slot.vaccineName}
-                    </p>
-                    <p style={{ marginBottom: 12, color: '#999', fontSize: 13 }}>
-                      已预约：{slot.bookedCount}/{slot.totalCapacity}
-                    </p>
-                    <Button
-                      type="primary"
-                      block
-                      icon={<BellOutlined />}
-                      onClick={() => handleNotify(slot.id)}
+                availableSlots.map((slot) => {
+                  const hasNotifiedForSlot = waitlist.some(
+                    (w) =>
+                      w.stationId === slot.stationId &&
+                      w.vaccineId === slot.vaccineId &&
+                      w.date === slot.date &&
+                      w.status === 'notified'
+                  );
+                  const hasWaiting = waitlist.some(
+                    (w) =>
+                      w.stationId === slot.stationId &&
+                      w.vaccineId === slot.vaccineId &&
+                      w.date === slot.date &&
+                      w.status === 'waiting'
+                  );
+                  return (
+                    <Card
+                      key={slot.id}
+                      size="small"
+                      title={`${slot.stationName} - ${slot.startTime}~${slot.endTime}`}
+                      style={{ width: 280 }}
+                      extra={
+                        <Tag color="green">
+                          {slot.totalCapacity - slot.bookedCount} 空位
+                        </Tag>
+                      }
                     >
-                      通知下一位候补
-                    </Button>
-                  </Card>
-                ))
+                      <p style={{ marginBottom: 8 }}>
+                        疫苗：{slot.vaccineName}
+                      </p>
+                      <p style={{ marginBottom: 12, color: '#999', fontSize: 13 }}>
+                        已预约：{slot.bookedCount}/{slot.totalCapacity}
+                      </p>
+                      {hasNotifiedForSlot ? (
+                        <Button block disabled type="default">
+                          已通知候补人待确认
+                        </Button>
+                      ) : hasWaiting ? (
+                        <Button
+                          type="primary"
+                          block
+                          icon={<BellOutlined />}
+                          onClick={() => handleNotify(slot.id)}
+                        >
+                          通知下一位候补
+                        </Button>
+                      ) : (
+                        <Button block disabled type="default">
+                          暂无候补人员
+                        </Button>
+                      )}
+                    </Card>
+                  );
+                })
               ) : (
                 <div style={{ width: '100%', textAlign: 'center', padding: 40, color: '#999' }}>
                   今日暂无空余时段
@@ -278,10 +400,10 @@ export default function WaitlistPage() {
             </div>
           </TabPane>
 
-          <TabPane tab="历史记录" key="history">
+          <TabPane tab={`历史记录 (${historyList.length})`} key="history">
             <Table
-              columns={notifiedColumns}
-              dataSource={historyList}
+              columns={historyColumns}
+              dataSource={historyList.sort((a, b) => dayjs(b.createdAt).unix() - dayjs(a.createdAt).unix())}
               rowKey="id"
               pagination={{ pageSize: 10 }}
               locale={{ emptyText: '暂无历史记录' }}

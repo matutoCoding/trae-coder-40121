@@ -89,6 +89,8 @@ export default function VaccinePage() {
     const vaccine = vaccines.find((v) => v.id === values.vaccineId);
     if (!vaccine) return;
 
+    const isExpired = dayjs(values.expiryDate.format('YYYY-MM-DD')).isBefore(dayjs().startOf('day'));
+
     addBatch({
       vaccineId: values.vaccineId,
       vaccineName: vaccine.name,
@@ -98,7 +100,12 @@ export default function VaccinePage() {
       quantity: values.quantity,
       remark: values.remark,
     });
-    message.success('批次入库成功');
+
+    if (isExpired) {
+      message.warning('该批次已过期，已自动归入"已过期"分类，不可用于接种');
+    } else {
+      message.success('批次入库成功');
+    }
     setBatchModalOpen(false);
   };
 
@@ -307,6 +314,9 @@ export default function VaccinePage() {
       </Modal>
 
       <Modal title="批次入库" open={batchModalOpen} onCancel={() => setBatchModalOpen(false)} footer={null} width={500}>
+        <div style={{ marginBottom: 12, padding: 8, background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 6, fontSize: 13, color: '#ad6800' }}>
+          ⚠ 注意：录入已过期的批次将自动归入"已过期"分类，不可用于接种流程。
+        </div>
         <Form form={batchForm} layout="vertical" onFinish={handleSaveBatch}>
           <Form.Item name="vaccineId" label="疫苗名称" rules={[{ required: true, message: '请选择疫苗' }]}>
             <Select placeholder="请选择疫苗">
@@ -327,7 +337,12 @@ export default function VaccinePage() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item name="expiryDate" label="有效期至" rules={[{ required: true, message: '请选择' }]}>
+              <Form.Item
+                name="expiryDate"
+                label="有效期至"
+                rules={[{ required: true, message: '请选择' }]}
+                extra="过期批次将不可用于接种"
+              >
                 <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>

@@ -38,9 +38,11 @@ interface AppState {
   updateBatch: (id: string, data: Partial<VaccineBatch>) => void;
   deleteBatch: (id: string) => void;
   recallBatch: (id: string, reason: string) => void;
+  checkBatchExpiry: () => void;
 
   generateSlots: (stationId: string, date: string, vaccineId: string) => void;
   getSlotsByDate: (date: string) => AppointmentSlot[];
+  recalcSlotStatus: (slotId: string) => void;
 
   createAppointment: (data: {
     slotId: string;
@@ -65,6 +67,9 @@ interface AppState {
   }) => void;
   cancelWaitlist: (id: string) => void;
   processWaitlistForSlot: (slotId: string) => WaitlistItem | null;
+  confirmWaitlist: (id: string) => Appointment | null;
+  declineWaitlist: (id: string) => void;
+  expireWaitlistNotifications: () => void;
 
   addNotification: (notification: Omit<Notification, 'id' | 'read' | 'createdAt'>) => void;
   markNotificationRead: (id: string) => void;
@@ -120,6 +125,12 @@ const initialStations: VaccinationStation[] = [
   },
 ];
 
+function computeSlotStatus(slot: AppointmentSlot): 'available' | 'full' | 'closed' {
+  if (slot.bookedCount >= slot.totalCapacity) return 'full';
+  if (slot.bookedCount < slot.totalCapacity) return 'available';
+  return slot.status;
+}
+
 export const useAppStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -164,7 +175,8 @@ export const useAppStore = create<AppState>()(
           vaccines: state.vaccines.filter((v) => v.id !== id),
         })),
 
-      addBatch: (batch) =>
+      addBatch: (batch) => {
+        const isExpired = dayjs(batch.expiryDate).isBefore(dayjs().startOf('day'));
         set((state) => ({
           batches: [
             ...state.batches,
@@ -172,11 +184,20 @@ export const useAppStore = create<AppState>()(
               ...batch,
               id: uuidv4(),
               usedQuantity: 0,
-              status: 'normal',
+              status: isExpired ? 'expired' : 'normal',
               createdAt: dayjs().toISOString(),
             },
           ],
-        })),
+        }));
+
+        if (isExpired) {
+          get().addNotification({
+            type: 'system',
+            title: '过期批次入库提醒',
+            content: `批次 ${batch.batchNo}（${batch.vaccineName}）已过期，不可用于接种`,
+          });
+        }
+      },
 
       updateBatch: (id, data) =>
         set((state) => ({
@@ -187,6 +208,27 @@ export const useAppStore = create<AppState>()(
         set((state) => ({
           batches: state.batches.filter((b) => b.id !== id),
         })),
+
+      checkBatchExpiry: () => {
+        const today = dayjs().startOf('day');
+        const expiredIds: string[] = [];
+        set((state) => ({
+          batches: state.batches.map((b) => {
+            if (b.status === 'normal' && dayjs(b.expiryDate).isBefore(today)) {
+              expiredIds.push(b.id);
+              return { ...b, status: 'expired' as const };
+            }
+            return b;
+          }),
+        }));
+        if (expiredIds.length > 0) {
+          get().addNotification({
+            type: 'system',
+            title: '批次过期通知',
+            content: `${expiredIds.length} 个批次已过有效期，已自动归入过期分类，不可用于接种`,
+          });
+        }
+      },
 
       recallBatch: (id, reason) => {
         const batch = get().batches.find((b) => b.id === id);
@@ -231,14 +273,14 @@ export const useAppStore = create<AppState>()(
 
         const start = dayjs(`${date} ${station.workStartTime}`);
         const end = dayjs(`${date} ${station.workEndTime}`);
-        const slots: AppointmentSlot[] = [];
+        const newSlots: AppointmentSlot[] = [];
 
         let current = start;
         while (current.isBefore(end)) {
           const slotEnd = current.add(station.slotDuration, 'minute');
           if (slotEnd.isAfter(end)) break;
 
-          slots.push({
+          newSlots.push({
             id: uuidv4(),
             stationId: station.id,
             stationName: station.name,
@@ -260,12 +302,20 @@ export const useAppStore = create<AppState>()(
           .map((s) => s.id);
 
         set((state) => ({
-          slots: [...state.slots.filter((s) => !existingSlotIds.includes(s.id)), ...slots],
+          slots: [...state.slots.filter((s) => !existingSlotIds.includes(s.id)), ...newSlots],
         }));
       },
 
       getSlotsByDate: (date) => {
         return get().slots.filter((s) => s.date === date);
+      },
+
+      recalcSlotStatus: (slotId) => {
+        set((state) => ({
+          slots: state.slots.map((s) =>
+            s.id === slotId ? { ...s, status: computeSlotStatus(s) } : s
+          ),
+        }));
       },
 
       createAppointment: (data) => {
@@ -289,14 +339,15 @@ export const useAppStore = create<AppState>()(
           createdAt: dayjs().toISOString(),
         };
 
+        const newBookedCount = slot.bookedCount + 1;
         set((state) => ({
           appointments: [...state.appointments, appointment],
           slots: state.slots.map((s) =>
             s.id === slot.id
               ? {
                   ...s,
-                  bookedCount: s.bookedCount + 1,
-                  status: s.bookedCount + 1 >= s.totalCapacity ? 'full' : s.status,
+                  bookedCount: newBookedCount,
+                  status: newBookedCount >= s.totalCapacity ? 'full' as const : 'available' as const,
                 }
               : s
           ),
@@ -309,6 +360,9 @@ export const useAppStore = create<AppState>()(
         const appointment = get().appointments.find((a) => a.id === id);
         if (!appointment) return;
 
+        const slot = get().slots.find((s) => s.id === appointment.slotId);
+        const newBookedCount = slot ? Math.max(0, slot.bookedCount - 1) : 0;
+
         set((state) => ({
           appointments: state.appointments.map((a) =>
             a.id === id ? { ...a, status: 'cancelled' as const } : a
@@ -317,8 +371,8 @@ export const useAppStore = create<AppState>()(
             s.id === appointment.slotId
               ? {
                   ...s,
-                  bookedCount: Math.max(0, s.bookedCount - 1),
-                  status: s.bookedCount - 1 > 0 ? 'available' : 'available',
+                  bookedCount: newBookedCount,
+                  status: newBookedCount >= s.totalCapacity ? 'full' as const : 'available' as const,
                 }
               : s
           ),
@@ -422,13 +476,20 @@ export const useAppStore = create<AppState>()(
         const appointment = get().appointments.find((a) => a.id === id);
         if (!appointment) return;
 
+        const slot = get().slots.find((s) => s.id === appointment.slotId);
+        const newBookedCount = slot ? Math.max(0, slot.bookedCount - 1) : 0;
+
         set((state) => ({
           appointments: state.appointments.map((a) =>
             a.id === id ? { ...a, status: 'no_show' as const } : a
           ),
           slots: state.slots.map((s) =>
             s.id === appointment.slotId
-              ? { ...s, bookedCount: Math.max(0, s.bookedCount - 1) }
+              ? {
+                  ...s,
+                  bookedCount: newBookedCount,
+                  status: newBookedCount >= s.totalCapacity ? 'full' as const : 'available' as const,
+                }
               : s
           ),
         }));
@@ -479,6 +540,8 @@ export const useAppStore = create<AppState>()(
         const slot = get().slots.find((s) => s.id === slotId);
         if (!slot) return null;
 
+        if (slot.bookedCount >= slot.totalCapacity) return null;
+
         const waitingList = get()
           .waitlist.filter(
             (w) =>
@@ -511,6 +574,117 @@ export const useAppStore = create<AppState>()(
         });
 
         return notifiedItem;
+      },
+
+      confirmWaitlist: (id) => {
+        const item = get().waitlist.find((w) => w.id === id);
+        if (!item || item.status !== 'notified') return null;
+
+        const slot = get().slots.find(
+          (s) =>
+            s.stationId === item.stationId &&
+            s.vaccineId === item.vaccineId &&
+            s.date === item.date &&
+            s.bookedCount < s.totalCapacity
+        );
+        if (!slot) return null;
+
+        const appointment: Appointment = {
+          id: uuidv4(),
+          slotId: slot.id,
+          stationId: slot.stationId,
+          stationName: slot.stationName,
+          vaccineId: slot.vaccineId,
+          vaccineName: slot.vaccineName,
+          date: slot.date,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          patientName: item.patientName,
+          idCard: item.idCard,
+          phone: item.phone,
+          status: 'booked',
+          createdAt: dayjs().toISOString(),
+        };
+
+        const newBookedCount = slot.bookedCount + 1;
+
+        set((state) => ({
+          waitlist: state.waitlist.map((w) =>
+            w.id === id ? { ...w, status: 'confirmed' as const } : w
+          ),
+          appointments: [...state.appointments, appointment],
+          slots: state.slots.map((s) =>
+            s.id === slot.id
+              ? {
+                  ...s,
+                  bookedCount: newBookedCount,
+                  status: newBookedCount >= s.totalCapacity ? 'full' as const : 'available' as const,
+                }
+              : s
+          ),
+        }));
+
+        return appointment;
+      },
+
+      declineWaitlist: (id) => {
+        const item = get().waitlist.find((w) => w.id === id);
+        if (!item || item.status !== 'notified') return;
+
+        const slotId = get().slots.find(
+          (s) =>
+            s.stationId === item.stationId &&
+            s.vaccineId === item.vaccineId &&
+            s.date === item.date &&
+            s.bookedCount < s.totalCapacity
+        )?.id;
+
+        set((state) => ({
+          waitlist: state.waitlist.map((w) =>
+            w.id === id ? { ...w, status: 'cancelled' as const } : w
+          ),
+        }));
+
+        if (slotId) {
+          get().processWaitlistForSlot(slotId);
+        }
+      },
+
+      expireWaitlistNotifications: () => {
+        const now = dayjs();
+        const expiredItems = get().waitlist.filter(
+          (w) => w.status === 'notified' && w.expiresAt && now.isAfter(dayjs(w.expiresAt))
+        );
+
+        if (expiredItems.length === 0) return;
+
+        const slotMap = new Map<string, string>();
+        expiredItems.forEach((item) => {
+          const slot = get().slots.find(
+            (s) =>
+              s.stationId === item.stationId &&
+              s.vaccineId === item.vaccineId &&
+              s.date === item.date &&
+              s.bookedCount < s.totalCapacity
+          );
+          if (slot) {
+            slotMap.set(item.id, slot.id);
+          }
+        });
+
+        set((state) => ({
+          waitlist: state.waitlist.map((w) => {
+            if (w.status === 'notified' && w.expiresAt && now.isAfter(dayjs(w.expiresAt))) {
+              return { ...w, status: 'expired' as const };
+            }
+            return w;
+          }),
+        }));
+
+        const uniqueSlotIds = new Set(slotMap.values());
+        uniqueSlotIds.forEach((slotId) => {
+          get().processWaitlistForSlot(slotId);
+        });
       },
 
       addNotification: (notification) =>
